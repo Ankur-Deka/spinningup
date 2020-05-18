@@ -3,6 +3,7 @@ import torch
 from torch.optim import Adam
 import gym
 import time
+import copy
 import spinup.algos.pytorch.vpg.core as core
 from spinup.utils.logx import EpochLogger
 from spinup.utils.mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads
@@ -51,7 +52,8 @@ class VPGBuffer:
         The "last_val" argument should be 0 if the trajectory ended
         because the agent reached a terminal state (died), and otherwise
         should be V(s_T), the value function estimated for the last state.
-        This allows us to bootstrap the reward-to-go calculation to account
+        This allows us to bootstrap gamma=0.99, lam=0.95):
+        self.obs_buf = np.zeros(core.combined_shape(sizee reward-to-go calculation to account
         for timesteps beyond the arbitrary episode horizon (or epoch cutoff).
         """
 
@@ -242,12 +244,17 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
         pi_l_old = pi_l_old.item()
         v_l_old = compute_loss_v(data).item()
 
+
         # Train policy with a single step of gradient descent
         pi_optimizer.zero_grad()
         loss_pi, pi_info = compute_loss_pi(data)
         loss_pi.backward()
         mpi_avg_grads(ac.pi)    # average grads across MPI processes
         pi_optimizer.step()
+
+        # How much does policy objective change after the update
+        with torch.no_grad():
+            pi_l_new, pi_info_new = compute_loss_pi(data)
 
         # Value function learning
         for i in range(train_v_iters):
@@ -261,7 +268,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
         kl, ent = pi_info['kl'], pi_info_old['ent']
         logger.store(LossPi=pi_l_old, LossV=v_l_old,
                      KL=kl, Entropy=ent,
-                     DeltaLossPi=(loss_pi.item() - pi_l_old),
+                     DeltaLossPi=(pi_l_new - pi_l_old),
                      DeltaLossV=(loss_v.item() - v_l_old))
 
     # Prepare for interaction with environment
@@ -291,8 +298,11 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
             if terminal or epoch_ended:
                 if epoch_ended and not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
+
                 # if trajectory didn't reach terminal state, bootstrap value target
-                if timeout or epoch_ended:
+                # should probably be: if not d
+                # if timeout or epoch_ended:
+                if not d:
                     _, v, _ = ac.step(torch.as_tensor(o, dtype=torch.float32))
                 else:
                     v = 0

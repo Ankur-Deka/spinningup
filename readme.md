@@ -18,6 +18,20 @@ This module contains a variety of helpful resources, including:
 Get started at [spinningup.openai.com](https://spinningup.openai.com)!
 
 
+## Important points
+1. VPG:
+	1. Uses GAE for advantage estimate with discounting (gamma & lambda). But expectation doesn't assume discounting
+	1. Normalizes advantage estimates over one epoch (0 mean, 1 std)
+	1. V used at time t actually corresponds to policy at time t-1. V always lags behind. So probably we don't want the policy to change too much :(
+
+
+## Getting Results
+1. Plotting
+`python -m spinup.run plot /home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0`
+
+1. Watch the trained agent with:
+`python -m spinup.run test_policy /home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0`
+
 Citing Spinning Up
 ------------------
 
