@@ -16,6 +16,18 @@ def combined_shape(length, shape=None):
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
 
+def flattened_shape(shape):
+    flat_dim = 1
+    for d in shape:
+        flat_dim*=d
+    return flat_dim
+
+def flatten(a):
+    batch_size = a.shape[0]
+    if torch.is_tensor(a):
+        return a.view(batch_size,-1)
+    else:
+        return a.reshape(batch_size,-1)
 
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
@@ -73,6 +85,7 @@ class MLPCategoricalActor(Actor):
         self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
     def _distribution(self, obs):
+        obs = flatten(obs)
         logits = self.logits_net(obs)
         return Categorical(logits=logits)
 
@@ -89,6 +102,7 @@ class MLPGaussianActor(Actor):
         self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
     def _distribution(self, obs):
+        obs = flatten(obs)
         mu = self.mu_net(obs)
         std = torch.exp(self.log_std)
         return Normal(mu, std)
@@ -104,6 +118,7 @@ class MLPCritic(nn.Module):
         self.v_net = mlp([obs_dim] + list(hidden_sizes) + [1], activation)
 
     def forward(self, obs):
+        obs = flatten(obs)
         return torch.squeeze(self.v_net(obs), -1) # Critical to ensure v has right shape.
 
 
@@ -115,7 +130,10 @@ class MLPActorCritic(nn.Module):
                  hidden_sizes=(64,64), activation=nn.Tanh):
         super().__init__()
 
-        obs_dim = observation_space.shape[0]
+        obs_dim = observation_space.shape
+        print('obs_dim', obs_dim)
+        obs_dim = flattened_shape(obs_dim)
+        print('obs_dim_flattened', obs_dim)
 
         # policy builder depends on action space
         if isinstance(action_space, Box):
@@ -127,6 +145,7 @@ class MLPActorCritic(nn.Module):
         self.v  = MLPCritic(obs_dim, hidden_sizes, activation)
 
     def step(self, obs):
+
         with torch.no_grad():
             pi = self.pi._distribution(obs)
             a = pi.sample()
@@ -191,7 +210,7 @@ class FrameDiff(gym.Wrapper):
         self.n_frames = n_frames
         self.frames = deque([], maxlen=n_frames)
         shp = env.observation_space.shape
-        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(shp[0],), dtype=env.observation_space.dtype)
+        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=shp, dtype=env.observation_space.dtype)
 
     def reset(self, **kwargs):
         obs = self.env.reset(**kwargs)
@@ -208,3 +227,23 @@ class FrameDiff(gym.Wrapper):
         assert len(self.frames) == self.n_frames
         diff = (self.frames[1]-self.frames[0])/255
         return diff
+
+class FrameBW(gym.Wrapper):
+    def __init__(self, env):
+        gym.Wrapper.__init__(self, env)
+        space = env.observation_space
+
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=space.shape[:-1], dtype=env.observation_space.dtype)
+
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        return self.process(obs)
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        return self.process(obs), reward, done, info
+
+
+    def process(self, obs):
+        obs = np.mean(obs, axis=2)
+        return obs
