@@ -23,13 +23,19 @@ Get started at [spinningup.openai.com](https://spinningup.openai.com)!
 	1. Uses GAE for advantage estimate with discounting (gamma & lambda). But expectation doesn't assume discounting
 	1. Normalizes advantage estimates over one epoch (0 mean, 1 std)
 	1. V used at time t actually corresponds to policy at time t-1. V always lags behind. So probably we don't want the policy to change too much :(
+	1. I tried rev, updating value before pi but no improvement
+	1. While training value function, target is fixed
 
+1. PPO: 
+	1. Updates pi and v separately, no entropy bonus
+	1. Early stoppping if KL(pi_old||pi) crosses threshold
+	1. v lags behind pi as in VPG
 
 ## Getting Results
-1. Plotting
+1. Plotting command looks like:
 `python -m spinup.run plot /home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0`
 
-1. Watch the trained agent with:
+1. Watch the trained agent with a command like:
 `python -m spinup.run test_policy /home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0`
 
 Citing Spinning Up

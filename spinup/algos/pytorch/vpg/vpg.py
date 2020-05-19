@@ -27,6 +27,10 @@ class VPGBuffer:
         self.logp_buf = np.zeros(size, dtype=np.float32)
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
+        self.start_ptrs = [0]
+        self.last_val = None
+
+
 
     def store(self, obs, act, rew, val, logp):
         """
@@ -40,7 +44,7 @@ class VPGBuffer:
         self.logp_buf[self.ptr] = logp
         self.ptr += 1
 
-    def finish_path(self, last_val=0):
+    def finish_path(self, last_o, d, last_val=0):
         """
         Call this at the end of a trajectory, or when one gets cut off
         by an epoch ending. This looks back in the buffer to where the
@@ -69,6 +73,9 @@ class VPGBuffer:
         self.ret_buf[path_slice] = core.discount_cumsum(rews, self.gamma)[:-1]
         
         self.path_start_idx = self.ptr
+        self.last_d = d
+        self.last_o = last_o
+        self.start_ptrs.append(self.path_start_idx)
 
     def get(self):
         """
@@ -77,14 +84,13 @@ class VPGBuffer:
         mean zero and std one). Also, resets some pointers in the buffer.
         """
         assert self.ptr == self.max_size    # buffer has to be full before you can get
-        self.ptr, self.path_start_idx = 0, 0
+        self.ptr, self.path_start_idx, self.last_val, self.start_ptrs = 0, 0, None, [0]
         # the next two lines implement the advantage normalization trick
         adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
-        data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
+        data = dict(obs=self.obs_buf, act=self.act_buf, rew=self.rew_buf, start_ptrs=self.start_ptrs, last_d=self.last_d, last_o=self.last_o, ret=self.ret_buf,
                     adv=self.adv_buf, logp=self.logp_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
-
 
 
 def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0, 
@@ -229,12 +235,51 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
         obs, ret = data['obs'], data['ret']
         return ((ac.v(obs) - ret)**2).mean()
 
+    # Compute new advantage using policy and value function
+    def update_adv(data):
+        data = core.to_numpy(data)
+        obs, act, rew, start_ptrs, last_d, last_o, ret, adv = data['obs'], data['act'], data['rew'], data['start_ptrs'], data['last_d'], data['last_o'], data['ret'], data['adv']
+        
+        # the next two lines implement GAE-Lambda advantage calculation
+        num_paths = start_ptrs.shape[0]-1
+        for i in range(num_paths):
+            path_slice = slice(int(start_ptrs[i]), int(start_ptrs[i+1]))
+            rew_path = rew[path_slice]
+            obs_path = obs[path_slice]  
+            _, val_path, _ = ac.step(torch.as_tensor(obs_path, dtype=torch.float32))
+
+            if i==num_paths-1 and last_d:
+                _, last_val, _ = ac.step(torch.as_tensor(last_o, dtype=torch.float32))
+            else:
+                last_val = 0
+
+            rew_path = np.append(rew_path, last_val)
+            val_path = np.append(val_path, last_val)
+            
+            # the next two lines implement GAE-Lambda advantage calculation
+            delta_path = rew_path[:-1] + gamma * val_path[1:] - val_path[:-1]
+            adv_path = core.discount_cumsum(delta_path, gamma * lam)
+            
+            # the next line computes rewards-to-go, to be targets for the value function
+            ret_path = core.discount_cumsum(rew_path, gamma)[:-1]
+            delta_path = rew_path[:-1] + gamma * val_path[1:] - val_path[:-1]
+            adv_path = core.discount_cumsum(delta_path, gamma * lam)
+            ret_path = core.discount_cumsum(rew_path, gamma)[:-1]        
+
+            ret[path_slice] = ret_path
+            adv[path_slice] = adv_path
+
+        data = core.to_torch(data)
+        return(data)
+
+
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
     vf_optimizer = Adam(ac.v.parameters(), lr=vf_lr)
 
     # Set up model saving
     logger.setup_pytorch_saver(ac)
+
 
     def update():
         data = buf.get()
@@ -243,10 +288,18 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
         pi_l_old, pi_info_old = compute_loss_pi(data)
         pi_l_old = pi_l_old.item()
         v_l_old = compute_loss_v(data).item()
-
+        
+        # Value function learning
+        for i in range(train_v_iters):
+            vf_optimizer.zero_grad()
+            loss_v = compute_loss_v(data)
+            loss_v.backward()
+            mpi_avg_grads(ac.v)    # average grads across MPI processes
+            vf_optimizer.step() 
 
         # Train policy with a single step of gradient descent
         pi_optimizer.zero_grad()
+        data = update_adv(data)
         loss_pi, pi_info = compute_loss_pi(data)
         loss_pi.backward()
         mpi_avg_grads(ac.pi)    # average grads across MPI processes
@@ -256,13 +309,6 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
         with torch.no_grad():
             pi_l_new, pi_info_new = compute_loss_pi(data)
 
-        # Value function learning
-        for i in range(train_v_iters):
-            vf_optimizer.zero_grad()
-            loss_v = compute_loss_v(data)
-            loss_v.backward()
-            mpi_avg_grads(ac.v)    # average grads across MPI processes
-            vf_optimizer.step()
 
         # Log changes from update
         kl, ent = pi_info['kl'], pi_info_old['ent']
@@ -306,7 +352,7 @@ def vpg(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(),  seed=0,
                     _, v, _ = ac.step(torch.as_tensor(o, dtype=torch.float32))
                 else:
                     v = 0
-                buf.finish_path(v)
+                buf.finish_path(o,d,v)
                 if terminal:
                     # only save EpRet / EpLen if trajectory finished
                     logger.store(EpRet=ep_ret, EpLen=ep_len)

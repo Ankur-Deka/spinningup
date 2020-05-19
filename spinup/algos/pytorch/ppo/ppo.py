@@ -206,6 +206,7 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Instantiate environment
     env = env_fn()
+    env = core.FrameStack(env,2)
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
 
@@ -232,6 +233,7 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1-clip_ratio, 1+clip_ratio) * adv
         loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+        # loss_pi = -(ratio*adv).mean()
 
         # Useful extra info
         approx_kl = (logp_old - logp).mean().item()

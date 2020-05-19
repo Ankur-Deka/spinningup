@@ -7,6 +7,11 @@ import torch.nn as nn
 from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
 
+def to_numpy(data):
+    return {k:v.numpy() if torch.is_tensor(v) else v for k,v in data.items()}
+
+def to_torch(data):
+    return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
 
 def combined_shape(length, shape=None):
     if shape is None:

@@ -1,5 +1,8 @@
+from collections import deque
+
 import numpy as np
 import scipy.signal
+import gym
 from gym.spaces import Box, Discrete
 
 import torch
@@ -133,3 +136,75 @@ class MLPActorCritic(nn.Module):
 
     def act(self, obs):
         return self.step(obs)[0]
+
+# frame stack taken from stable baselines
+class FrameStack(gym.Wrapper):
+    def __init__(self, env, n_frames):
+        """Stack n_frames last frames.
+
+        Returns lazy array, which is much more memory efficient.
+
+        See Also
+        --------
+        stable_baselines.common.atari_wrappers.LazyFrames
+
+        :param env: (Gym Environment) the environment
+        :param n_frames: (int) the number of frames to stack
+        """
+        gym.Wrapper.__init__(self, env)
+        self.n_frames = n_frames
+        self.frames = deque([], maxlen=n_frames)
+        shp = env.observation_space.shape
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(shp[0]*self.n_frames,), dtype=env.observation_space.dtype)
+
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        for _ in range(self.n_frames):
+            self.frames.append(obs)
+        return self._get_ob()
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        self.frames.append(obs)
+        return self._get_ob(), reward, done, info
+
+    def _get_ob(self):
+        assert len(self.frames) == self.n_frames
+        return np.array(self.frames).flatten()
+
+
+# frame stack taken from stable baselines
+class FrameDiff(gym.Wrapper):
+    def __init__(self, env, n_frames):
+        """Stack n_frames last frames.
+
+        Returns lazy array, which is much more memory efficient.
+
+        See Also
+        --------
+        stable_baselines.common.atari_wrappers.LazyFrames
+
+        :param env: (Gym Environment) the environment
+        :param n_frames: (int) the number of frames to stack
+        """
+        gym.Wrapper.__init__(self, env)
+        self.n_frames = n_frames
+        self.frames = deque([], maxlen=n_frames)
+        shp = env.observation_space.shape
+        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(shp[0],), dtype=env.observation_space.dtype)
+
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        for _ in range(self.n_frames):
+            self.frames.append(obs)
+        return self._get_ob()
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        self.frames.append(obs)
+        return self._get_ob(), reward, done, info
+
+    def _get_ob(self):
+        assert len(self.frames) == self.n_frames
+        diff = (self.frames[1]-self.frames[0])/255
+        return diff
