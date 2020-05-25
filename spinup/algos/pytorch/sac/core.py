@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
+from gym.space import Box, Discrete
 
 def combined_shape(length, shape=None):
     if shape is None:
@@ -67,6 +68,20 @@ class SquashedGaussianMLPActor(nn.Module):
         return pi_action, logp_pi
 
 
+class MLPCategoricalActor(Actor):
+    
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+        super().__init__()
+        self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+
+    def _distribution(self, obs):
+        obs = flatten(obs)
+        logits = self.logits_net(obs)
+        return Categorical(logits=logits)
+
+    def _log_prob_from_distribution(self, pi, act):
+        return pi.log_prob(act)
+
 class MLPQFunction(nn.Module):
 
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
@@ -77,6 +92,16 @@ class MLPQFunction(nn.Module):
         q = self.q(torch.cat([obs, act], dim=-1))
         return torch.squeeze(q, -1) # Critical to ensure q has right shape.
 
+
+class MLPCategoricalQFunction(nn.Module):
+
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+        super().__init__()
+        self.q = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+
+    def forward(self, obs):
+        return self.q(obs)
+        
 class MLPActorCritic(nn.Module):
 
     def __init__(self, observation_space, action_space, hidden_sizes=(256,256),
@@ -84,13 +109,28 @@ class MLPActorCritic(nn.Module):
         super().__init__()
 
         obs_dim = observation_space.shape[0]
-        act_dim = action_space.shape[0]
-        act_limit = action_space.high[0]
+        
+        if isinstance(action_space, Box):
+            act_dim = action_space.shape[0]
+            act_limit = action_space.high[0]
 
-        # build policy and value functions
-        self.pi = SquashedGaussianMLPActor(obs_dim, act_dim, hidden_sizes, activation, act_limit)
-        self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
-        self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
+            # build policy and value functions
+            self.pi = SquashedGaussianMLPActor(obs_dim, act_dim, hidden_sizes, activation, act_limit)
+            self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
+            self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
+
+        elif isinstance(action_space, Discrete):
+            self.pi = MLPCategoricalActor(obs_dim, action_space.n, hidden_sizes, activation)
+            self.q1 = MLPCategoricalQFunction(obs_dim, action_space.n, hidden_sizes, activation)
+            self.q2 = MLPCategoricalQFunction(obs_dim, action_space.n, hidden_sizes, activation)
+    
+    def step(self, obs):   
+        with torch.no_grad():
+            pi = self.pi._distribution(obs)
+            a = pi.sample()
+            logp_a = self.pi._log_prob_from_distribution(pi, a)
+            v = self.v(obs)
+        return a.numpy(), v.numpy(), logp_a.numpy()
 
     def act(self, obs, deterministic=False):
         with torch.no_grad():
