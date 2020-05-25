@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
+from torch.distributions.categorical import Categorical
 
-from gym.space import Box, Discrete
+from gym.spaces import Box, Discrete
 
 def combined_shape(length, shape=None):
     if shape is None:
@@ -68,19 +69,39 @@ class SquashedGaussianMLPActor(nn.Module):
         return pi_action, logp_pi
 
 
-class MLPCategoricalActor(Actor):
+class MLPCategoricalActor(nn.Module):
     
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
         self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
-    def _distribution(self, obs):
+    def forward(self, obs, deterministic=False, with_logprob=True):
         obs = flatten(obs)
         logits = self.logits_net(obs)
-        return Categorical(logits=logits)
+        pi_distribution = Categorical(logits=logits)
 
-    def _log_prob_from_distribution(self, pi, act):
-        return pi.log_prob(act)
+        if deterministic:
+            pi_action = torch.argmax(logits, dim=-1)
+        else:
+            pi_action = pi_distribution.rsample()
+
+        if with_logprob:
+            log_pi = pi.log_prob(pi_action)
+        else:
+            log_pi = None
+
+        return pi_action, logp_pi
+
+    def get_probs(self, obs):
+        obs = flatten(obs)
+        logits = self.logits_net(obs)
+        pi_distribution = Categorical(logits=logits)
+
+        probs = pi_distribution.probs
+        log_prob = torch.log(probs)
+
+        return probs, log_probs
+
 
 class MLPQFunction(nn.Module):
 
@@ -114,25 +135,23 @@ class MLPActorCritic(nn.Module):
             act_dim = action_space.shape[0]
             act_limit = action_space.high[0]
 
+            self.is_discrete = False
             # build policy and value functions
             self.pi = SquashedGaussianMLPActor(obs_dim, act_dim, hidden_sizes, activation, act_limit)
             self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
             self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
 
         elif isinstance(action_space, Discrete):
+            self.is_discrete = True
             self.pi = MLPCategoricalActor(obs_dim, action_space.n, hidden_sizes, activation)
             self.q1 = MLPCategoricalQFunction(obs_dim, action_space.n, hidden_sizes, activation)
             self.q2 = MLPCategoricalQFunction(obs_dim, action_space.n, hidden_sizes, activation)
     
-    def step(self, obs):   
-        with torch.no_grad():
-            pi = self.pi._distribution(obs)
-            a = pi.sample()
-            logp_a = self.pi._log_prob_from_distribution(pi, a)
-            v = self.v(obs)
-        return a.numpy(), v.numpy(), logp_a.numpy()
-
     def act(self, obs, deterministic=False):
         with torch.no_grad():
             a, _ = self.pi(obs, deterministic, False)
             return a.numpy()
+
+    def get_probs(self, obs):
+        assert self.is_discrete, "Action space needs to be discrete"
+        return self.pi.get_probs(obs)
