@@ -21,7 +21,11 @@ class GridSearch():
 					args_string += ' {} '.format(args[i])
 				else:
 					args_string += ' --{} {}'.format(arg_name, args[i])
-				exp_name += '_{}'.format(args[i])
+				
+				if arg_name == 'env':
+					exp_name = '{}/'.format(args[i])+exp_name
+				elif arg_name != 'seed':
+					exp_name += '_{}'.format(args[i])
 			
 			args_string += ' --exp_name {}'.format(exp_name)
 			cmd = 'python {}{}'.format(self.main_file, args_string)
@@ -53,6 +57,7 @@ class GridSearch():
 
 		# -------- divide into equal parts and run -------- #
 		num_configs = len(args_list)
+		num_process = min(self.num_process, num_configs)
 		IDs = np.array_split(np.arange(num_configs), self.num_process)
 		process_list = []
 		

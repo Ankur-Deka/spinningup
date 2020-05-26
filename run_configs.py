@@ -7,11 +7,14 @@ from grid_search import GridSearch
 main_file = '-m spinup.run'
 
 # -------- define dictionary of arguments for grid search -------- #
-args = {'algo': ['td3', 'ddpg'],
-	'env': ['Hopper-v3', 'Ant-v2', 'Humanoid-v2'],
-	'steps_per_epoch': [2000],
-	'epochs': [1000]}
+args = {'algo': ['ppo', 'vpg', 'sac'],
+	'env': ['Pong-ram-v0'],
+	'steps_per_epoch': [4000],
+	'epochs': [10],
+	'seed': [0]}
 
 # -------- create GridSearch object and run -------- #
-myGridSearch = GridSearch(main_file, args, num_process=6)
+import grid_search
+print(grid_search)
+myGridSearch = GridSearch(main_file, args, num_process=8)
 myGridSearch.run()

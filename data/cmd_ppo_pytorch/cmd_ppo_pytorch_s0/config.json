@@ -2,21 +2,21 @@
     "ac_kwargs":	{},
     "actor_critic":	"MLPActorCritic",
     "clip_ratio":	0.2,
-    "env_fn":	"<function call_experiment.<locals>.thunk_plus.<locals>.<lambda> at 0x7fe419403950>",
-    "epochs":	1000,
+    "env_fn":	"<function call_experiment.<locals>.thunk_plus.<locals>.<lambda> at 0x7faae0674dd0>",
+    "epochs":	50,
     "exp_name":	"cmd_ppo_pytorch",
     "gamma":	0.99,
     "lam":	0.97,
     "logger":	{
-        "<spinup.utils.logx.EpochLogger object at 0x7fe419353b38>":	{
+        "<spinup.utils.logx.EpochLogger object at 0x7faa3c833910>":	{
             "epoch_dict":	{},
             "exp_name":	"cmd_ppo_pytorch",
             "first_row":	true,
             "log_current_row":	{},
             "log_headers":	[],
-            "output_dir":	"/home/ankur/MSR_Research/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0",
+            "output_dir":	"/home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0",
             "output_file":	{
-                "<_io.TextIOWrapper name='/home/ankur/MSR_Research/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0/progress.txt' mode='w' encoding='UTF-8'>":	{
+                "<_io.TextIOWrapper name='/home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0/progress.txt' mode='w' encoding='UTF-8'>":	{
                     "mode":	"w"
                 }
             }
@@ -24,13 +24,13 @@
     },
     "logger_kwargs":	{
         "exp_name":	"cmd_ppo_pytorch",
-        "output_dir":	"/home/ankur/MSR_Research/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0"
+        "output_dir":	"/home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0"
     },
     "max_ep_len":	1000,
     "pi_lr":	0.0003,
     "save_freq":	10,
     "seed":	0,
-    "steps_per_epoch":	2000,
+    "steps_per_epoch":	4000,
     "target_kl":	0.01,
     "train_pi_iters":	80,
     "train_v_iters":	80,

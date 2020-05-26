@@ -14,6 +14,19 @@ def combined_shape(length, shape=None):
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
 
+def flattened_shape(shape):
+    flat_dim = 1
+    for d in shape:
+        flat_dim*=d
+    return flat_dim
+
+def flatten(a):
+    batch_size = a.shape[0]
+    if torch.is_tensor(a):
+        return a.view(batch_size,-1)
+    else:
+        return a.reshape(batch_size,-1)
+
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
     for j in range(len(sizes)-1):
@@ -73,33 +86,29 @@ class MLPCategoricalActor(nn.Module):
     
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
-        self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+        self.probs_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation, output_activation = nn.Softmax)
 
     def forward(self, obs, deterministic=False, with_logprob=True):
-        obs = flatten(obs)
-        logits = self.logits_net(obs)
-        pi_distribution = Categorical(logits=logits)
+        # obs = flatten(obs)
+        probs = self.probs_net(obs)
+        pi_distribution = Categorical(probs=probs)
 
         if deterministic:
-            pi_action = torch.argmax(logits, dim=-1)
+            pi_action = torch.argmax(probs, dim=-1)
         else:
-            pi_action = pi_distribution.rsample()
+            pi_action = pi_distribution.sample()
 
         if with_logprob:
             log_pi = pi.log_prob(pi_action)
         else:
             log_pi = None
 
-        return pi_action, logp_pi
+        return pi_action, log_pi
 
     def get_probs(self, obs):
-        obs = flatten(obs)
-        logits = self.logits_net(obs)
-        pi_distribution = Categorical(logits=logits)
-
-        probs = pi_distribution.probs
-        log_prob = torch.log(probs)
-
+        # obs = flatten(obs)
+        probs = self.probs_net(obs)
+        log_probs = torch.log(probs+1e-10)
         return probs, log_probs
 
 
@@ -120,8 +129,13 @@ class MLPCategoricalQFunction(nn.Module):
         super().__init__()
         self.q = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
-    def forward(self, obs):
-        return self.q(obs)
+    def forward(self, obs, act = None):
+        q = self.q(obs)
+        if not act is None:
+            bSize = q.shape[0]
+            q = q[torch.arange(bSize), act]
+        return q
+
         
 class MLPActorCritic(nn.Module):
 
@@ -146,7 +160,7 @@ class MLPActorCritic(nn.Module):
             self.pi = MLPCategoricalActor(obs_dim, action_space.n, hidden_sizes, activation)
             self.q1 = MLPCategoricalQFunction(obs_dim, action_space.n, hidden_sizes, activation)
             self.q2 = MLPCategoricalQFunction(obs_dim, action_space.n, hidden_sizes, activation)
-    
+            
     def act(self, obs, deterministic=False):
         with torch.no_grad():
             a, _ = self.pi(obs, deterministic, False)
@@ -155,3 +169,6 @@ class MLPActorCritic(nn.Module):
     def get_probs(self, obs):
         assert self.is_discrete, "Action space needs to be discrete"
         return self.pi.get_probs(obs)
+
+
+    

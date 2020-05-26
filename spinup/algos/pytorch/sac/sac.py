@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from torch.optim import Adam
 import gym
+from gym.spaces import Box, Discrete
 import time
 import spinup.algos.pytorch.sac.core as core
 from spinup.utils.logx import EpochLogger
@@ -14,10 +15,11 @@ class ReplayBuffer:
     A simple FIFO experience replay buffer for SAC agents.
     """
 
-    def __init__(self, obs_dim, act_dim, size):
+    def __init__(self, obs_dim, act_dim, is_discrete, size):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.obs2_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
+        act_type = np.int if is_discrete else np.float32
+        self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=act_type)
         self.rew_buf = np.zeros(size, dtype=np.float32)
         self.done_buf = np.zeros(size, dtype=np.float32)
         self.ptr, self.size, self.max_size = 0, 0, size
@@ -38,7 +40,7 @@ class ReplayBuffer:
                      act=self.act_buf[idxs],
                      rew=self.rew_buf[idxs],
                      done=self.done_buf[idxs])
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in batch.items()}
+        return {k: torch.as_tensor(v) for k,v in batch.items()}
 
 
 
@@ -153,9 +155,12 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     env, test_env = env_fn(), env_fn()
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
+    is_discrete = isinstance(env.action_space, Discrete)
 
     # Action limit for clamping: critically, assumes all dimensions share the same bound!
-    act_limit = env.action_space.high[0]
+    if isinstance(env.action_space, Box):
+        act_limit = env.action_space.high[0]
+
 
     # Create actor-critic module and target networks
     ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
@@ -169,7 +174,7 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     q_params = itertools.chain(ac.q1.parameters(), ac.q2.parameters())
 
     # Experience buffer
-    replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
+    replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, is_discrete=is_discrete, size=replay_size)
 
     # Count variables (protip: try to get a feel for how different size networks behave!)
     var_counts = tuple(core.count_vars(module) for module in [ac.pi, ac.q1, ac.q2])
@@ -179,19 +184,29 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     def compute_loss_q(data):
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
 
+        # Bellman backup for Q functions
         q1 = ac.q1(o,a)
         q2 = ac.q2(o,a)
+        
 
-        # Bellman backup for Q functions
         with torch.no_grad():
-            # Target actions come from *current* policy
-            a2, logp_a2 = ac.pi(o2)
+            if is_discrete:
+                # Target actions come from current policy
+                pi_nxt, log_probs_nxt = ac.get_probs(o2)    
+                q1_nxt = ac_targ.q1(o2)
+                q2_nxt = ac_targ.q2(o2)
+                q_nxt = torch.min(q1_nxt, q2_nxt)
+                v_nxt = torch.sum(pi_nxt*(q_nxt-alpha*log_probs_nxt), dim=-1)
+                backup = r + gamma * (1 - d) * v_nxt 
+            else:
+                # Target actions come from *current* policy
+                a2, logp_a2 = ac.pi(o2)
 
-            # Target Q-values
-            q1_pi_targ = ac_targ.q1(o2, a2)
-            q2_pi_targ = ac_targ.q2(o2, a2)
-            q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
-            backup = r + gamma * (1 - d) * (q_pi_targ - alpha * logp_a2)
+                # Target Q-values
+                q1_pi_targ = ac_targ.q1(o2, a2)
+                q2_pi_targ = ac_targ.q2(o2, a2)
+                q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
+                backup = r + gamma * (1 - d) * (q_pi_targ - alpha * logp_a2)
 
         # MSE loss against Bellman backup
         loss_q1 = ((q1 - backup)**2).mean()
@@ -207,16 +222,26 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # Set up function for computing SAC pi loss
     def compute_loss_pi(data):
         o = data['obs']
-        pi, logp_pi = ac.pi(o)
-        q1_pi = ac.q1(o, pi)
-        q2_pi = ac.q2(o, pi)
-        q_pi = torch.min(q1_pi, q2_pi)
+        if is_discrete:
+            prob, log_prob = ac.get_probs(o)
+            q1 = ac.q1(o)
+            q2 = ac.q2(o)
+            q = torch.min(q1, q2)
 
-        # Entropy-regularized policy loss
-        loss_pi = (alpha * logp_pi - q_pi).mean()
+            loss_pi = (prob*(alpha*log_prob-q)).sum(-1).mean()
 
-        # Useful info for logging
-        pi_info = dict(LogPi=logp_pi.detach().numpy())
+            pi_info = dict(LogPi=log_prob.detach().numpy())
+        else:
+            pi, logp_pi = ac.pi(o)
+            q1_pi = ac.q1(o, pi)
+            q2_pi = ac.q2(o, pi)
+            q_pi = torch.min(q1_pi, q2_pi)
+
+            # Entropy-regularized policy loss
+            loss_pi = (alpha * logp_pi - q_pi).mean()
+
+            # Useful info for logging
+            pi_info = dict(LogPi=logp_pi.detach().numpy())
 
         return loss_pi, pi_info
 
@@ -339,11 +364,11 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             logger.log_tabular('EpLen', average_only=True)
             logger.log_tabular('TestEpLen', average_only=True)
             logger.log_tabular('TotalEnvInteracts', t)
-            logger.log_tabular('Q1Vals', with_min_and_max=True)
-            logger.log_tabular('Q2Vals', with_min_and_max=True)
-            logger.log_tabular('LogPi', with_min_and_max=True)
-            logger.log_tabular('LossPi', average_only=True)
-            logger.log_tabular('LossQ', average_only=True)
+            # logger.log_tabular('Q1Vals', with_min_and_max=True)
+            # logger.log_tabular('Q2Vals', with_min_and_max=True)
+            # logger.log_tabular('LogPi', with_min_and_max=True)
+            # logger.log_tabular('LossPi', average_only=True)
+            # logger.log_tabular('LossQ', average_only=True)
             logger.log_tabular('Time', time.time()-start_time)
             logger.dump_tabular()
 

@@ -300,8 +300,8 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
             a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32).unsqueeze(0))
-
-            next_o, r, d, _ = env.step(a)
+            # print('aciton', a[0])
+            next_o, r, d, _ = env.step(a[0])
             ep_ret += r
             ep_len += 1
 

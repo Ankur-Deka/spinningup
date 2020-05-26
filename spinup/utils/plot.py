@@ -151,22 +151,32 @@ def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None):
     return data
 
 
-def make_plots(all_logdirs, legend=None, xaxis=None, values=None, count=False,  
+def make_plots(all_logdirs, savepath=None, legend=None, xaxis=None, values=None, count=False,  
                font_scale=1.5, smooth=1, select=None, exclude=None, estimator='mean'):
     data = get_all_datasets(all_logdirs, legend, select, exclude)
     values = values if isinstance(values, list) else [values]
     condition = 'Condition2' if count else 'Condition1'
     estimator = getattr(np, estimator)      # choose what to show on main curve: mean? max? min?
+
     for value in values:
         plt.figure()
         plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
-    plt.show()
+
+    if savepath is None:
+        savepath = 'data/plots/'
+        for logdir in all_logdirs:
+            savepath += logdir[4:].replace('/','') + '--'
+    else:
+        savepath = os.path.join('data/plots', savepath)
+
+    plt.savefig(savepath)
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('logdir', nargs='*')
+    parser.add_argument('--savepath')
     parser.add_argument('--legend', '-l', nargs='*')
     parser.add_argument('--xaxis', '-x', default='TotalEnvInteracts')
     parser.add_argument('--value', '-y', default='Performance', nargs='*')
@@ -182,7 +192,9 @@ def main():
         logdir (strings): As many log directories (or prefixes to log 
             directories, which the plotter will autocomplete internally) as 
             you'd like to plot from.
-
+    
+        savepath (string): If provided saves to the path
+        
         legend (strings): Optional way to specify legend for the plot. The 
             plotter legend will automatically use the ``exp_name`` from the
             config.json file, unless you tell it otherwise through this flag.
@@ -225,7 +237,7 @@ def main():
 
     """
 
-    make_plots(args.logdir, args.legend, args.xaxis, args.value, args.count, 
+    make_plots(args.logdir, args.savepath, args.legend, args.xaxis, args.value, args.count, 
                smooth=args.smooth, select=args.select, exclude=args.exclude,
                estimator=args.est)
 
