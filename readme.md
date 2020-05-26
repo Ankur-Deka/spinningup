@@ -17,7 +17,6 @@ This module contains a variety of helpful resources, including:
 
 Get started at [spinningup.openai.com](https://spinningup.openai.com)!
 
-
 ## Important points
 1. VPG:
 	1. Uses GAE for advantage estimate with discounting (gamma & lambda). But expectation doesn't assume discounting
@@ -31,12 +30,18 @@ Get started at [spinningup.openai.com](https://spinningup.openai.com)!
 	1. Early stoppping if KL(pi_old||pi) crosses threshold
 	1. v lags behind pi as in VPG
 
+
 ## Getting Results
 1. Plotting command looks like:
 `python -m spinup.run plot /home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0`
 
 1. Watch the trained agent with a command like:
 `python -m spinup.run test_policy /home/ankur/MSR_Research_Home/spinningup/data/cmd_ppo_pytorch/cmd_ppo_pytorch_s0`
+
+## Issues:
+1. mpi behaves in a way that I don't understand clearly:
+	1. with base env, if I set num_env to 1 it uses all cores and when I set it to something else it kinda works.
+	1. with ResPolicy env on ava, it sticks to one CPU no matter how many parallel runs I make.
 
 Citing Spinning Up
 ------------------
